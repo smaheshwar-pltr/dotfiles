@@ -1,0 +1,21 @@
+{
+  "name": "snippets",
+  "contributes": {
+    "snippets": [
+      {
+        "language": [
+          "cpp",
+          "c++"
+        ],
+        "path": "snippets/cp-cpp-bruh.json"
+      },
+      {
+        "language": [
+          "cpp",
+          "c++"
+        ],
+        "path": "snippets/cp-global-bruh.json"
+      }
+    ]
+  }
+}

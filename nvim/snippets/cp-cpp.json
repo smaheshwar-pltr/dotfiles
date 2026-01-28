@@ -1,0 +1,103 @@
+{
+	"accumulate": {
+		"prefix": "accumulate",
+		"body": "accumulate$0"
+	},
+	"std::array": {
+		"prefix": "array",
+		"body": "array$0"
+	},
+	"auto": {
+		"prefix": "auto",
+		"body": "auto$0"
+	},
+	"const": {
+		"prefix": "const",
+		"body": "const$0"
+	},
+	"vector": {
+		"prefix": "vector",
+		"body": "vector$0"
+	},
+	"map": {
+		"prefix": "map",
+		"body": "map$0"
+	},
+	"cin": {
+		"prefix": "cin",
+		"body": "cin$0"
+	},
+	"cout": {
+		"prefix": "cout",
+		"body": "cout$0"
+	},
+	"emplace": {
+		"prefix": "emplace",
+		"body": "emplace$0"
+	},
+	"emplace_back": {
+		"prefix": "emplace_back",
+		"body": "emplace_back$0"
+	},
+	"erase": {
+		"prefix": "erase",
+		"body": "erase$0"
+	},
+	"fprintf …": {
+		"prefix": "fprintf",
+		"body": "fprintf(${1:stderr}, \"${2:%s}\\\\n\"${2/([^%]|%%)*(%.)?.*/(?2:, :\\);)/}$3${2/([^%]|%%)*(%.)?.*/(?2:\\);)/}$0"
+	},
+	"greater": {
+		"prefix": "greater",
+		"body": "greater$0"
+	},
+	"insert": {
+		"prefix": "insert",
+		"body": "insert$0"
+	},
+	"int64_t": {
+		"prefix": "int64_t",
+		"body": "int64_t$0"
+	},
+	"memset": {
+		"prefix": "memset",
+		"body": "memset$0"
+	},
+	"multiset": {
+		"prefix": "multiset",
+		"body": "multiset$0"
+	},
+	"pair": {
+		"prefix": "pair",
+		"body": "pair$0"
+	},
+	"pop_back": {
+		"prefix": "pop_back",
+		"body": "pop_back$0"
+	},
+	"priority_queue": {
+		"prefix": "priority_queue",
+		"body": "priority_queue$0"
+	},
+	"push": {
+		"prefix": "push",
+		"body": "push$0"
+	},
+	"push_back": {
+		"prefix": "push_back",
+		"body": "push_back$0"
+	},
+	"std::queue": {
+		"prefix": "queue",
+		"body": "queue$0"
+	},
+	"sort": {
+		"prefix": "sort",
+		"body": "sort$0"
+	},
+	"struct": {
+		"prefix": "struct",
+		"body": "struct$0"
+	}
+}
+
