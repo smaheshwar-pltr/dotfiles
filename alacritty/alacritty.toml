@@ -102,11 +102,11 @@ bindings = [
   # --- Pane zoom (Cmd+z → M-z) ---
   { key = "Z", mods = "Command", chars = "\u001bz" },
 
-  # --- Neovim window resizing (Ctrl+Shift+hjkl, CSI u) ---
-  { key = "H", mods = "Control|Shift", chars = "\u001b[72;6u" },
-  { key = "J", mods = "Control|Shift", chars = "\u001b[74;6u" },
-  { key = "K", mods = "Control|Shift", chars = "\u001b[75;6u" },
-  { key = "L", mods = "Control|Shift", chars = "\u001b[76;6u" },
+  # --- Neovim window resizing (Ctrl+Shift+hjkl → custom escape sequences) ---
+  { key = "h", mods = "Control|Shift", chars = "\u001b_RH" },
+  { key = "j", mods = "Control|Shift", chars = "\u001b_RJ" },
+  { key = "k", mods = "Control|Shift", chars = "\u001b_RK" },
+  { key = "l", mods = "Control|Shift", chars = "\u001b_RL" },
 
   # --- Shell conveniences ---
   { key = "Return", mods = "Shift", chars = "\u000a" },
