@@ -1,47 +1,33 @@
-# --- WSL default shell ---
-[terminal.shell]
-program = "wsl.exe"
-args = ["-d", "Ubuntu", "--cd", "~"]
-
 # --- Catppuccin Mocha (Alacritty) ---
 [colors.primary]
 background = "#1E1E2E"
 foreground = "#CDD6F4"
 dim_foreground = "#CDD6F4"
 bright_foreground = "#CDD6F4"
-
 [colors.cursor]
 text = "#1E1E2E"
 cursor = "#F5E0DC"
-
 [colors.vi_mode_cursor]
 text = "#1E1E2E"
 cursor = "#B4BEFE"
-
 [colors.search.matches]
 foreground = "#1E1E2E"
 background = "#A6ADC8"
-
 [colors.search.focused_match]
 foreground = "#1E1E2E"
 background = "#A6E3A1"
-
 [colors.footer_bar]
 foreground = "#1E1E2E"
 background = "#A6ADC8"
-
 [colors.hints.start]
 foreground = "#1E1E2E"
 background = "#F9E2AF"
-
 [colors.hints.end]
 foreground = "#1E1E2E"
 background = "#A6ADC8"
-
 [colors.selection]
 text = "#1E1E2E"
 background = "#F5E0DC"
-
 [colors.normal]
 black = "#45475A"
 red = "#F38BA8"
@@ -51,7 +37,6 @@ blue = "#89B4FA"
 magenta = "#F5C2E7"
 cyan = "#94E2D5"
 white = "#BAC2DE"
-
 [colors.bright]
 black = "#585B70"
 red = "#F38BA8"
@@ -61,7 +46,6 @@ blue = "#89B4FA"
 magenta = "#F5C2E7"
 cyan = "#94E2D5"
 white = "#A6ADC8"
-
 [colors.dim]
 black = "#45475A"
 red = "#F38BA8"
@@ -72,33 +56,80 @@ magenta = "#F5C2E7"
 cyan = "#94E2D5"
 white = "#BAC2DE"
 
-# --- Clipboard / Copy paste fixes (Windows-friendly) ---
 [selection]
 save_to_clipboard = true
 
 [keyboard]
 bindings = [
+  # --- Clipboard ---
   { key = "C", mods = "Control|Shift", action = "Copy" },
   { key = "V", mods = "Control|Shift", action = "Paste" },
   { key = "Insert", mods = "Control", action = "Copy" },
   { key = "Insert", mods = "Shift", action = "Paste" },
+
+  # --- tmux prefix (Cmd+A → M-a) ---
+  { key = "A", mods = "Command", chars = "\u001ba" },
+
+  # --- Pane navigation (Cmd+hjkl → M-hjkl) ---
+  { key = "H", mods = "Command", chars = "\u001bh" },
+  { key = "J", mods = "Command", chars = "\u001bj" },
+  { key = "K", mods = "Command", chars = "\u001bk" },
+  { key = "L", mods = "Command", chars = "\u001bl" },
+
+  # --- Pane resizing (Cmd+Shift+hjkl → M-HJKL) ---
+  { key = "H", mods = "Command|Shift", chars = "\u001bH" },
+  { key = "J", mods = "Command|Shift", chars = "\u001bJ" },
+  { key = "K", mods = "Command|Shift", chars = "\u001bK" },
+  { key = "L", mods = "Command|Shift", chars = "\u001bL" },
+
+  # --- Window switching (Cmd+1-5 → M-1-5) ---
+  { key = "Key1", mods = "Command", chars = "\u001b1" },
+  { key = "Key2", mods = "Command", chars = "\u001b2" },
+  { key = "Key3", mods = "Command", chars = "\u001b3" },
+  { key = "Key4", mods = "Command", chars = "\u001b4" },
+  { key = "Key5", mods = "Command", chars = "\u001b5" },
+
+  # --- Window cycling (Cmd+n/p → M-n/p) ---
+  { key = "N", mods = "Command", chars = "\u001bn" },
+  { key = "P", mods = "Command", chars = "\u001bp" },
+
+  # --- Last window toggle (Cmd+Tab → M-Tab) ---
+  { key = "Tab", mods = "Command", chars = "\u001b\u0009" },
+
+  # --- Last pane toggle (Cmd+; → M-;) ---
+  { key = "Semicolon", mods = "Command", chars = "\u001b;" },
+
+  # --- Pane zoom (Cmd+z → M-z) ---
+  { key = "Z", mods = "Command", chars = "\u001bz" },
+
+  # --- Neovim window resizing (Ctrl+Shift+hjkl, CSI u) ---
+  { key = "H", mods = "Control|Shift", chars = "\u001b[72;6u" },
+  { key = "J", mods = "Control|Shift", chars = "\u001b[74;6u" },
+  { key = "K", mods = "Control|Shift", chars = "\u001b[75;6u" },
+  { key = "L", mods = "Control|Shift", chars = "\u001b[76;6u" },
+
+  # --- Shell conveniences ---
+  { key = "Return", mods = "Shift", chars = "\u000a" },
+  { key = "Left", mods = "Command", chars = "\u0001" },
+  { key = "Right", mods = "Command", chars = "\u0005" },
+  { key = "Back", mods = "Command", chars = "\u0015" },
 ]
 
+[env]
+TERM = "xterm-256color"
+
 [window]
-# decorations = "None"
-# startup_mode = "Maximized"
+dynamic_title = false
+option_as_alt = "Both"
 
 [font]
 size = 12.0
-
 [font.normal]
 family = "JetBrainsMono Nerd Font"
 style = "Regular"
-
 [font.bold]
 family = "JetBrainsMono Nerd Font"
 style = "Bold"
-
 [font.italic]
 family = "JetBrainsMono Nerd Font"
 style = "Italic"
