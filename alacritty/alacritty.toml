@@ -1,3 +1,6 @@
+[terminal]
+osc52 = "CopyPaste"  # or "OnlyCopy" if you just want copy
+
 # --- Catppuccin Mocha (Alacritty) ---
 [colors.primary]
 background = "#1E1E2E"
