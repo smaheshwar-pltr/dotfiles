@@ -96,9 +96,6 @@ bindings = [
   { key = "N", mods = "Command", chars = "\u001bn" },
   { key = "P", mods = "Command", chars = "\u001bp" },
 
-  # --- Last window toggle (Cmd+Tab → M-Tab) ---
-  { key = "Tab", mods = "Command", chars = "\u001b\u0009" },
-
   # --- Last pane toggle (Cmd+; → M-;) ---
   { key = "Semicolon", mods = "Command", chars = "\u001b;" },
 
