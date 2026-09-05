@@ -51,6 +51,10 @@ reset_fake() {
     rm -f -- "$FAKE_COUNT_FILE" "$FAKE_ARGS_FILE"
 }
 
+run_in_target() {
+    (cd "$TARGET_REPOSITORY" && "$SCRIPT" "$@")
+}
+
 make_fake_codex() {
     local path="$1"
 
@@ -119,7 +123,7 @@ FAKE_SCENARIO=limit-then-success
 CODEX_OVERNIGHT_PROFILE=overnight
 export FAKE_SCENARIO CODEX_OVERNIGHT_PROFILE
 
-"$SCRIPT" "$TARGET_REPOSITORY" session-123 >"$TEST_ROOT/limit-output"
+run_in_target session-123 >"$TEST_ROOT/limit-output"
 
 [ "$(<"$FAKE_COUNT_FILE")" -eq 2 ] || fail "usage limit should retry once"
 assert_args_repeated 2 \
@@ -134,7 +138,7 @@ FAKE_SCENARIO=approaching-limit
 export FAKE_SCENARIO
 
 set +e
-"$SCRIPT" "$TARGET_REPOSITORY" session-456 >"$TEST_ROOT/approaching-output" 2>&1
+run_in_target session-456 >"$TEST_ROOT/approaching-output" 2>&1
 status=$?
 set -e
 
@@ -148,7 +152,7 @@ FAKE_SCENARIO=phrase-in-output
 export FAKE_SCENARIO
 
 set +e
-"$SCRIPT" "$TARGET_REPOSITORY" session-789 >"$TEST_ROOT/phrase-output" 2>&1
+run_in_target session-789 >"$TEST_ROOT/phrase-output" 2>&1
 status=$?
 set -e
 
@@ -160,24 +164,25 @@ reset_fake
 FAKE_SCENARIO=success
 export FAKE_SCENARIO
 
-"$SCRIPT" "$TARGET_REPOSITORY" option-prompt --help >"$TEST_ROOT/option-output"
+run_in_target option-prompt --help >"$TEST_ROOT/option-output"
 assert_args_repeated 1 exec --color never --json resume -- option-prompt --help
 
 reset_fake
-mkdir -p "$TEST_ROOT/launch"
-(
-    cd "$TEST_ROOT/launch"
-    CODEX_OVERNIGHT_STATE_DIR=relative-state \
-        "$SCRIPT" "$TARGET_REPOSITORY" relative-state >"$TEST_ROOT/relative-output"
-)
-[ -d "$TEST_ROOT/launch/relative-state" ] || fail "relative state directory was not created at launch path"
+set +e
+CODEX_OVERNIGHT_STATE_DIR=relative-state \
+    run_in_target relative-state >"$TEST_ROOT/relative-output" 2>&1
+status=$?
+set -e
+[ "$status" -eq 2 ] || fail "relative state directory should exit with status 2"
+assert_contains "$TEST_ROOT/relative-output" "must be an absolute path"
 [ ! -e "$TARGET_REPOSITORY/relative-state" ] || fail "relative state directory leaked into target repository"
+[ ! -e "$FAKE_COUNT_FILE" ] || fail "Codex should not start with a relative state directory"
 
 reset_fake
 touch "$TEST_ROOT/not-a-directory"
 set +e
 CODEX_OVERNIGHT_STATE_DIR="$TEST_ROOT/not-a-directory" \
-    "$SCRIPT" "$TARGET_REPOSITORY" invalid-state >"$TEST_ROOT/state-output" 2>&1
+    run_in_target invalid-state >"$TEST_ROOT/state-output" 2>&1
 status=$?
 set -e
 [ "$status" -eq 1 ] || fail "invalid state directory should exit with status 1"
@@ -191,7 +196,7 @@ mkdir -p "$FULL_STATE_DIR"
 ln -s /dev/full "$FULL_STATE_DIR/session-$FULL_SESSION_KEY.log"
 set +e
 CODEX_OVERNIGHT_STATE_DIR="$FULL_STATE_DIR" \
-    "$SCRIPT" "$TARGET_REPOSITORY" log-failure >"$TEST_ROOT/log-output" 2>&1
+    run_in_target log-failure >"$TEST_ROOT/log-output" 2>&1
 status=$?
 set -e
 [ "$status" -eq 1 ] || fail "log write failure should exit with status 1"
@@ -206,7 +211,7 @@ export FAKE_SCENARIO FAKE_READY_FILE FAKE_RELEASE_FIFO
 mkfifo "$FAKE_RELEASE_FIFO"
 
 CODEX_OVERNIGHT_STATE_DIR="$TEST_ROOT/state-a" \
-    "$SCRIPT" "$TARGET_REPOSITORY" locked-session >"$TEST_ROOT/first-lock-output" 2>&1 &
+    run_in_target locked-session >"$TEST_ROOT/first-lock-output" 2>&1 &
 FIRST_PID=$!
 for _ in {1..50}; do
     [ -e "$FAKE_READY_FILE" ] && break
@@ -216,7 +221,7 @@ done
 
 set +e
 CODEX_OVERNIGHT_STATE_DIR="$TEST_ROOT/state-b" \
-    "$SCRIPT" "$TARGET_REPOSITORY" locked-session >"$TEST_ROOT/second-lock-output" 2>&1
+    run_in_target locked-session >"$TEST_ROOT/second-lock-output" 2>&1
 status=$?
 set -e
 [ "$status" -eq 1 ] || fail "second runner should fail to acquire the session lock"

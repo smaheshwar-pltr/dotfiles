@@ -9,7 +9,7 @@ DEFAULT_PROMPT="Continue the existing task until it is complete or genuinely blo
 
 usage() {
     cat <<EOF
-Usage: $PROGRAM_NAME REPOSITORY SESSION_ID [PROMPT]
+Usage: $PROGRAM_NAME SESSION_ID [PROMPT]
 
 Resume a Codex session and retry it after usage-limit resets.
 
@@ -28,14 +28,14 @@ case "${1:-}" in
         ;;
 esac
 
-if [ "$#" -lt 2 ] || [ "$#" -gt 3 ]; then
+if [ "$#" -lt 1 ] || [ "$#" -gt 2 ]; then
     usage >&2
     exit 2
 fi
 
-REPOSITORY="$1"
-SESSION_ID="$2"
-PROMPT="${3:-$DEFAULT_PROMPT}"
+REPOSITORY="$PWD"
+SESSION_ID="$1"
+PROMPT="${2:-$DEFAULT_PROMPT}"
 CODEX_BIN="${CODEX_BIN:-codex}"
 CODEX_PROFILE="${CODEX_OVERNIGHT_PROFILE:-}"
 RETRY_SECONDS="${CODEX_OVERNIGHT_RETRY_SECONDS:-900}"
@@ -67,10 +67,13 @@ if ! command -v "$CODEX_BIN" >/dev/null 2>&1; then
     exit 127
 fi
 
-if ! command -v flock >/dev/null 2>&1; then
-    echo "$PROGRAM_NAME: flock is required (install the util-linux package)" >&2
-    exit 127
-fi
+case "$STATE_DIR" in
+    /*) ;;
+    *)
+        echo "$PROGRAM_NAME: CODEX_OVERNIGHT_STATE_DIR must be an absolute path" >&2
+        exit 2
+        ;;
+esac
 
 if ! mkdir -p -- "$STATE_DIR"; then
     echo "$PROGRAM_NAME: cannot create state directory: $STATE_DIR" >&2
@@ -81,18 +84,8 @@ if ! STATE_DIR="$(cd -- "$STATE_DIR" && pwd -P)"; then
     exit 1
 fi
 
-if ! mkdir -p -- "$LOCK_DIR"; then
-    echo "$PROGRAM_NAME: cannot create lock directory: $LOCK_DIR" >&2
-    exit 1
-fi
-if ! LOCK_DIR="$(cd -- "$LOCK_DIR" && pwd -P)"; then
-    echo "$PROGRAM_NAME: cannot resolve lock directory: $LOCK_DIR" >&2
-    exit 1
-fi
-
 SESSION_KEY="$(printf '%s' "$SESSION_ID" | cksum | awk '{print $1}')"
 LOG="$STATE_DIR/session-$SESSION_KEY.log"
-LOCK="$LOCK_DIR/session-$SESSION_KEY.lock"
 ATTEMPT_OUTPUT=""
 
 cleanup() {
@@ -104,13 +97,21 @@ cleanup() {
 trap cleanup EXIT
 trap 'exit 130' HUP INT TERM
 
-if ! { exec 9>"$LOCK"; } 2>/dev/null; then
-    echo "$PROGRAM_NAME: cannot open session lock: $LOCK" >&2
-    exit 1
-fi
-if ! flock -n 9; then
-    echo "$PROGRAM_NAME: another runner is already using this session" >&2
-    exit 1
+if command -v flock >/dev/null 2>&1; then
+    if mkdir -p -- "$LOCK_DIR" 2>/dev/null &&
+        LOCK_DIR="$(cd -- "$LOCK_DIR" && pwd -P)"; then
+        LOCK="$LOCK_DIR/session-$SESSION_KEY.lock"
+        if { exec 9>"$LOCK"; } 2>/dev/null; then
+            if ! flock -n 9; then
+                echo "$PROGRAM_NAME: another runner is already using this session" >&2
+                exit 1
+            fi
+        else
+            echo "$PROGRAM_NAME: warning: session locking is unavailable" >&2
+        fi
+    else
+        echo "$PROGRAM_NAME: warning: session locking is unavailable" >&2
+    fi
 fi
 
 if ! : >>"$LOG"; then
