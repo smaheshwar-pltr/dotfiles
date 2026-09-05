@@ -49,10 +49,11 @@ To start an overnight run:
    codex-overnight "CHAT_ID" "Continue until the task is complete."
    ```
 
-The resumed model sees the original prompt and transcript. The follow-up starts
-a new turn after the limit error. If you omit it, the wrapper asks Codex to
-continue the existing task and reconcile the transcript with the repository's
-current state.
+The resumed model receives the session's saved effective context. This is the
+original transcript unless Codex has compacted older turns into a summary. The
+follow-up starts a new turn after the limit error. If you omit it, the wrapper
+asks Codex to continue the existing task and reconcile the saved context with
+the repository's current state.
 
 The non-interactive client does not show the interactive "Approaching rate
 limits" picker. In an interactive session, choose `Keep current model` or
@@ -71,10 +72,11 @@ You can also run `tmux detach-client`. Reattach with
 `tmux attach -t codex-overnight`. tmux protects against terminal disconnects,
 not Windows power-state changes.
 
-Keep Windows plugged in and configure it not to sleep or hibernate. Sleep,
-hibernation, lid-close actions, Windows restarts, and `wsl --shutdown` stop or
-pause work inside WSL. After an interruption, reattach and inspect the log.
-Rerun the same command if the wrapper stopped.
+Keep Windows plugged in and configure it not to sleep or hibernate. After
+sleep or hibernation, reattach and check whether the wrapper continued. A
+Windows restart or `wsl --shutdown` destroys the tmux server. In that case,
+open WSL, inspect the saved log directly, start a new tmux session, and rerun
+the same command.
 
 Logs are private to your user by default and live under
 `${XDG_STATE_HOME:-$HOME/.local/state}/codex-overnight`. They can contain Codex

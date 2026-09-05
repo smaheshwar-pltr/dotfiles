@@ -98,6 +98,10 @@ case "$FAKE_SCENARIO" in
         exit 76
         ;;
     wait-for-release)
+        if [ -e "$FAKE_READY_FILE" ]; then
+            echo "second runner reached Codex" >&2
+            exit 91
+        fi
         touch "$FAKE_READY_FILE"
         read -r _ <"$FAKE_RELEASE_FIFO"
         echo '{"type":"turn.completed","usage":{}}'

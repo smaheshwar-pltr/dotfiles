@@ -102,10 +102,16 @@ if command -v flock >/dev/null 2>&1; then
         LOCK_DIR="$(cd -- "$LOCK_DIR" && pwd -P)"; then
         LOCK="$LOCK_DIR/session-$SESSION_KEY.lock"
         if { exec 9>"$LOCK"; } 2>/dev/null; then
-            if ! flock -n 9; then
-                echo "$PROGRAM_NAME: another runner is already using this session" >&2
-                exit 1
-            fi
+            flock -n -E 75 9
+            LOCK_STATUS="$?"
+            case "$LOCK_STATUS" in
+                0) ;;
+                75)
+                    echo "$PROGRAM_NAME: another runner is already using this session" >&2
+                    exit 1
+                    ;;
+                *) echo "$PROGRAM_NAME: warning: session locking is unavailable" >&2 ;;
+            esac
         else
             echo "$PROGRAM_NAME: warning: session locking is unavailable" >&2
         fi

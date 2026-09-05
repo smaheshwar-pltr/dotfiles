@@ -1,5 +1,6 @@
 export EDITOR="nvim"
 export VISUAL="nvim"
+export PATH="$HOME/.local/bin:$PATH"
 # alias vim="nvim"
 
 # Enable Powerlevel10k instant prompt. Should stay close to the top of ~/.zshrc.
@@ -86,4 +87,3 @@ bindkey -v '^?' backward-delete-char
 
 # --- fzf ---
 [ -f ~/.fzf.zsh ] && source ~/.fzf.zsh
-
