@@ -69,11 +69,22 @@ fi
 count=$((count + 1))
 printf '%s\n' "$count" >"$FAKE_COUNT_FILE"
 printf '%s\0' "$@" >>"$FAKE_ARGS_FILE"
+if [ -e /proc/$$/fd/9 ]; then
+    echo "session lock leaked into Codex" >&2
+    exit 88
+fi
 
 case "$FAKE_SCENARIO" in
     limit-then-success)
         if [ "$count" -eq 1 ]; then
             echo '{"type":"error","message":"You'"'"'ve hit your usage limit. Try again later."}'
+            exit 1
+        fi
+        echo '{"type":"turn.completed","usage":{}}'
+        ;;
+    turn-failed-then-success)
+        if [ "$count" -eq 1 ]; then
+            echo '{"type":"turn.failed","error":{"message":"You'"'"'ve hit your usage limit. Try again later."}}'
             exit 1
         fi
         echo '{"type":"turn.completed","usage":{}}'
@@ -131,6 +142,16 @@ assert_args_repeated 2 \
     resume -- session-123 "$DEFAULT_PROMPT"
 assert_contains "$TEST_ROOT/limit-output" "Usage limit reached; retrying in 0 seconds."
 assert_contains "$TEST_ROOT/limit-output" "Codex completed successfully."
+
+reset_fake
+unset CODEX_OVERNIGHT_PROFILE
+FAKE_SCENARIO=turn-failed-then-success
+export FAKE_SCENARIO
+
+run_in_target turn-failed >"$TEST_ROOT/turn-failed-output"
+[ "$(<"$FAKE_COUNT_FILE")" -eq 2 ] || fail "turn.failed usage limit should retry once"
+assert_args_repeated 2 exec --color never --json resume -- turn-failed "$DEFAULT_PROMPT"
+assert_contains "$TEST_ROOT/turn-failed-output" "Usage limit reached; retrying in 0 seconds."
 
 reset_fake
 unset CODEX_OVERNIGHT_PROFILE
@@ -203,32 +224,34 @@ set -e
 assert_contains "$TEST_ROOT/log-output" "cannot write log"
 [ ! -e "$FAKE_COUNT_FILE" ] || fail "Codex should not start when logging fails"
 
-reset_fake
-FAKE_SCENARIO=wait-for-release
-FAKE_READY_FILE="$TEST_ROOT/ready"
-FAKE_RELEASE_FIFO="$TEST_ROOT/release"
-export FAKE_SCENARIO FAKE_READY_FILE FAKE_RELEASE_FIFO
-mkfifo "$FAKE_RELEASE_FIFO"
+if command -v flock >/dev/null 2>&1; then
+    reset_fake
+    FAKE_SCENARIO=wait-for-release
+    FAKE_READY_FILE="$TEST_ROOT/ready"
+    FAKE_RELEASE_FIFO="$TEST_ROOT/release"
+    export FAKE_SCENARIO FAKE_READY_FILE FAKE_RELEASE_FIFO
+    mkfifo "$FAKE_RELEASE_FIFO"
 
-CODEX_OVERNIGHT_STATE_DIR="$TEST_ROOT/state-a" \
-    run_in_target locked-session >"$TEST_ROOT/first-lock-output" 2>&1 &
-FIRST_PID=$!
-for _ in {1..50}; do
-    [ -e "$FAKE_READY_FILE" ] && break
-    sleep 0.1
-done
-[ -e "$FAKE_READY_FILE" ] || fail "first runner did not start"
+    CODEX_OVERNIGHT_STATE_DIR="$TEST_ROOT/state-a" \
+        run_in_target locked-session >"$TEST_ROOT/first-lock-output" 2>&1 &
+    FIRST_PID=$!
+    for _ in {1..50}; do
+        [ -e "$FAKE_READY_FILE" ] && break
+        sleep 0.1
+    done
+    [ -e "$FAKE_READY_FILE" ] || fail "first runner did not start"
 
-set +e
-CODEX_OVERNIGHT_STATE_DIR="$TEST_ROOT/state-b" \
-    run_in_target locked-session >"$TEST_ROOT/second-lock-output" 2>&1
-status=$?
-set -e
-[ "$status" -eq 1 ] || fail "second runner should fail to acquire the session lock"
-assert_contains "$TEST_ROOT/second-lock-output" "another runner is already using this session"
+    set +e
+    CODEX_OVERNIGHT_STATE_DIR="$TEST_ROOT/state-b" \
+        run_in_target locked-session >"$TEST_ROOT/second-lock-output" 2>&1
+    status=$?
+    set -e
+    [ "$status" -eq 1 ] || fail "second runner should fail to acquire the session lock"
+    assert_contains "$TEST_ROOT/second-lock-output" "another runner is already using this session"
 
-printf 'continue\n' >"$FAKE_RELEASE_FIFO"
-wait "$FIRST_PID"
-FIRST_PID=""
+    printf 'continue\n' >"$FAKE_RELEASE_FIFO"
+    wait "$FIRST_PID"
+    FIRST_PID=""
+fi
 
 echo "PASS: codex-overnight"

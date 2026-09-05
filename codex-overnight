@@ -163,7 +163,7 @@ while true; do
 
     "$CODEX_BIN" exec "${CODEX_OPTIONS[@]}" \
         resume -- "$SESSION_ID" "$PROMPT" \
-        2>&1 | tee -a "$LOG" "$ATTEMPT_OUTPUT"
+        9>&- 2>&1 | tee -a "$LOG" "$ATTEMPT_OUTPUT" 9>&-
     PIPELINE_STATUS=("${PIPESTATUS[@]}")
     CODEX_STATUS="${PIPELINE_STATUS[0]}"
     TEE_STATUS="${PIPELINE_STATUS[1]}"

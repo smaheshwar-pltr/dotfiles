@@ -11,16 +11,35 @@ the `You've hit your usage limit` error, the script waits 15 minutes and
 resumes the same session. It exits after a successful turn or any other
 failure.
 
-Put the script on your `PATH` once:
+From this dotfiles checkout, put the script on your `PATH` once:
 
 ```sh
 mkdir -p "$HOME/.local/bin"
 ln -s "$PWD/codex-overnight" "$HOME/.local/bin/codex-overnight"
+export PATH="$HOME/.local/bin:$PATH"
+command -v codex-overnight
 ```
+
+The wrapper does not pass model or sandbox overrides. Codex exec restores the
+transcript but resolves the model and permissions from the current
+configuration. It cannot stop for interactive approvals. If the session uses a
+named profile, pass the same profile to the wrapper:
+
+```sh
+cd "$HOME/src/my-project"
+CODEX_OVERNIGHT_PROFILE=overnight \
+  codex-overnight "CHAT_ID" "Continue until the task is complete."
+```
+
+Changes made only inside a session with `/model` or `/permissions` are not
+automatically restored by the current exec client. Save those settings in the
+default configuration or the named profile before leaving the task.
 
 To start an overnight run:
 
-1. In the existing session, run `/status` and copy the chat ID.
+1. In the existing session, run `/status`. Copy the chat ID and verify the
+   displayed model and permissions match the configuration or profile that the
+   wrapper will use.
 2. Exit with `/quit`. Do not run interactive and overnight clients against the
    same session at the same time.
 3. In the target Git repository, pass the chat ID and your follow-up prompt:
@@ -34,20 +53,6 @@ The resumed model sees the original prompt and transcript. The follow-up starts
 a new turn after the limit error. If you omit it, the wrapper asks Codex to
 continue the existing task and reconcile the transcript with the repository's
 current state.
-
-The wrapper does not pass model or sandbox overrides. Codex exec restores the
-transcript but resolves the model and permissions from the current
-configuration. It cannot stop for interactive approvals. If the session uses a
-named profile, pass the same profile to the wrapper:
-
-```sh
-CODEX_OVERNIGHT_PROFILE=overnight \
-  codex-overnight "CHAT_ID" "Continue until the task is complete."
-```
-
-Changes made only inside a session with `/model` or `/permissions` are not
-automatically restored by the current exec client. Save those settings in the
-default configuration or the named profile before leaving the task.
 
 The non-interactive client does not show the interactive "Approaching rate
 limits" picker. In an interactive session, choose `Keep current model` or
