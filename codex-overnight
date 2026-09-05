@@ -1,0 +1,123 @@
+#!/usr/bin/env bash
+
+set -uo pipefail
+
+umask 077
+
+PROGRAM_NAME="${0##*/}"
+DEFAULT_PROMPT="Continue the existing task. Inspect the current repository and git diff first. Preserve correct partial work, complete the remaining implementation, and run the relevant tests. Keep working until the task is complete or genuinely blocked."
+
+usage() {
+    cat <<EOF
+Usage: $PROGRAM_NAME REPOSITORY SESSION_ID [PROMPT]
+
+Resume a Codex session and retry it after usage-limit resets.
+
+Environment variables:
+  CODEX_BIN                         Codex executable (default: codex)
+  CODEX_OVERNIGHT_RETRY_SECONDS     Delay between retries (default: 900)
+  CODEX_OVERNIGHT_STATE_DIR         Log and lock directory
+EOF
+}
+
+case "${1:-}" in
+    -h | --help)
+        usage
+        exit 0
+        ;;
+esac
+
+if [ "$#" -lt 2 ] || [ "$#" -gt 3 ]; then
+    usage >&2
+    exit 2
+fi
+
+REPOSITORY="$1"
+SESSION_ID="$2"
+PROMPT="${3:-$DEFAULT_PROMPT}"
+CODEX_BIN="${CODEX_BIN:-codex}"
+RETRY_SECONDS="${CODEX_OVERNIGHT_RETRY_SECONDS:-900}"
+STATE_DIR="${CODEX_OVERNIGHT_STATE_DIR:-${XDG_STATE_HOME:-$HOME/.local/state}/codex-overnight}"
+
+if ! [[ "$RETRY_SECONDS" =~ ^[0-9]+$ ]]; then
+    echo "$PROGRAM_NAME: CODEX_OVERNIGHT_RETRY_SECONDS must be a non-negative integer" >&2
+    exit 2
+fi
+
+if [ ! -d "$REPOSITORY" ]; then
+    echo "$PROGRAM_NAME: repository does not exist: $REPOSITORY" >&2
+    exit 2
+fi
+
+if ! git -C "$REPOSITORY" rev-parse --is-inside-work-tree >/dev/null 2>&1; then
+    echo "$PROGRAM_NAME: not a Git repository: $REPOSITORY" >&2
+    exit 2
+fi
+
+if ! command -v "$CODEX_BIN" >/dev/null 2>&1; then
+    echo "$PROGRAM_NAME: Codex executable not found: $CODEX_BIN" >&2
+    exit 127
+fi
+
+mkdir -p -- "$STATE_DIR" || exit 1
+
+SESSION_KEY="$(printf '%s' "$SESSION_ID" | cksum | awk '{print $1}')"
+LOG="$STATE_DIR/session-$SESSION_KEY.log"
+LOCK="$STATE_DIR/session-$SESSION_KEY.lock"
+ATTEMPT_OUTPUT=""
+
+cleanup() {
+    if [ -n "$ATTEMPT_OUTPUT" ]; then
+        rm -f -- "$ATTEMPT_OUTPUT"
+    fi
+}
+
+trap cleanup EXIT
+trap 'exit 130' HUP INT TERM
+
+if command -v flock >/dev/null 2>&1; then
+    exec 9>"$LOCK"
+    if ! flock -n 9; then
+        echo "$PROGRAM_NAME: another runner is already using this session" >&2
+        exit 1
+    fi
+fi
+
+timestamp() {
+    date '+%Y-%m-%dT%H:%M:%S%z'
+}
+
+log_message() {
+    printf '[%s] %s\n' "$(timestamp)" "$1" | tee -a "$LOG"
+}
+
+cd -- "$REPOSITORY" || exit 1
+
+while true; do
+    ATTEMPT_OUTPUT="$(mktemp "$STATE_DIR/attempt.XXXXXX")" || exit 1
+
+    log_message "Starting Codex for session $SESSION_ID."
+
+    "$CODEX_BIN" exec \
+        --color never \
+        --sandbox workspace-write \
+        resume "$SESSION_ID" "$PROMPT" \
+        2>&1 | tee -a "$LOG" "$ATTEMPT_OUTPUT"
+    CODEX_STATUS="${PIPESTATUS[0]}"
+
+    if [ "$CODEX_STATUS" -eq 0 ]; then
+        log_message "Codex completed successfully."
+        exit 0
+    fi
+
+    if grep -Fqi "You've hit your usage limit" "$ATTEMPT_OUTPUT"; then
+        log_message "Usage limit reached; retrying in $RETRY_SECONDS seconds."
+        rm -f -- "$ATTEMPT_OUTPUT"
+        ATTEMPT_OUTPUT=""
+        sleep "$RETRY_SECONDS"
+        continue
+    fi
+
+    log_message "Codex failed without the expected usage-limit message; stopping with status $CODEX_STATUS."
+    exit "$CODEX_STATUS"
+done
