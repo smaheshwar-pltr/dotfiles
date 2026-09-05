@@ -5,7 +5,7 @@ set -uo pipefail
 umask 077
 
 PROGRAM_NAME="${0##*/}"
-DEFAULT_PROMPT="Continue the existing task. Inspect the current repository and git diff first. Preserve correct partial work, complete the remaining implementation, and run the relevant tests. Keep working until the task is complete or genuinely blocked."
+DEFAULT_PROMPT="Continue the existing task until it is complete or genuinely blocked. First reconcile the saved session with the repository's current state and preserve correct partial work. Run the relevant tests before finishing."
 
 usage() {
     cat <<EOF
@@ -15,8 +15,9 @@ Resume a Codex session and retry it after usage-limit resets.
 
 Environment variables:
   CODEX_BIN                         Codex executable (default: codex)
+  CODEX_OVERNIGHT_PROFILE           Codex profile used to resume the session
   CODEX_OVERNIGHT_RETRY_SECONDS     Delay between retries (default: 900)
-  CODEX_OVERNIGHT_STATE_DIR         Log and lock directory
+  CODEX_OVERNIGHT_STATE_DIR         Log directory
 EOF
 }
 
@@ -36,8 +37,15 @@ REPOSITORY="$1"
 SESSION_ID="$2"
 PROMPT="${3:-$DEFAULT_PROMPT}"
 CODEX_BIN="${CODEX_BIN:-codex}"
+CODEX_PROFILE="${CODEX_OVERNIGHT_PROFILE:-}"
 RETRY_SECONDS="${CODEX_OVERNIGHT_RETRY_SECONDS:-900}"
 STATE_DIR="${CODEX_OVERNIGHT_STATE_DIR:-${XDG_STATE_HOME:-$HOME/.local/state}/codex-overnight}"
+LOCK_DIR="${XDG_RUNTIME_DIR:-${XDG_STATE_HOME:-$HOME/.local/state}}/codex-overnight-locks"
+
+if [ -z "$SESSION_ID" ]; then
+    echo "$PROGRAM_NAME: SESSION_ID must not be empty" >&2
+    exit 2
+fi
 
 if ! [[ "$RETRY_SECONDS" =~ ^[0-9]+$ ]]; then
     echo "$PROGRAM_NAME: CODEX_OVERNIGHT_RETRY_SECONDS must be a non-negative integer" >&2
@@ -59,11 +67,32 @@ if ! command -v "$CODEX_BIN" >/dev/null 2>&1; then
     exit 127
 fi
 
-mkdir -p -- "$STATE_DIR" || exit 1
+if ! command -v flock >/dev/null 2>&1; then
+    echo "$PROGRAM_NAME: flock is required (install the util-linux package)" >&2
+    exit 127
+fi
+
+if ! mkdir -p -- "$STATE_DIR"; then
+    echo "$PROGRAM_NAME: cannot create state directory: $STATE_DIR" >&2
+    exit 1
+fi
+if ! STATE_DIR="$(cd -- "$STATE_DIR" && pwd -P)"; then
+    echo "$PROGRAM_NAME: cannot resolve state directory: $STATE_DIR" >&2
+    exit 1
+fi
+
+if ! mkdir -p -- "$LOCK_DIR"; then
+    echo "$PROGRAM_NAME: cannot create lock directory: $LOCK_DIR" >&2
+    exit 1
+fi
+if ! LOCK_DIR="$(cd -- "$LOCK_DIR" && pwd -P)"; then
+    echo "$PROGRAM_NAME: cannot resolve lock directory: $LOCK_DIR" >&2
+    exit 1
+fi
 
 SESSION_KEY="$(printf '%s' "$SESSION_ID" | cksum | awk '{print $1}')"
 LOG="$STATE_DIR/session-$SESSION_KEY.log"
-LOCK="$STATE_DIR/session-$SESSION_KEY.lock"
+LOCK="$LOCK_DIR/session-$SESSION_KEY.lock"
 ATTEMPT_OUTPUT=""
 
 cleanup() {
@@ -75,12 +104,18 @@ cleanup() {
 trap cleanup EXIT
 trap 'exit 130' HUP INT TERM
 
-if command -v flock >/dev/null 2>&1; then
-    exec 9>"$LOCK"
-    if ! flock -n 9; then
-        echo "$PROGRAM_NAME: another runner is already using this session" >&2
-        exit 1
-    fi
+if ! { exec 9>"$LOCK"; } 2>/dev/null; then
+    echo "$PROGRAM_NAME: cannot open session lock: $LOCK" >&2
+    exit 1
+fi
+if ! flock -n 9; then
+    echo "$PROGRAM_NAME: another runner is already using this session" >&2
+    exit 1
+fi
+
+if ! : >>"$LOG"; then
+    echo "$PROGRAM_NAME: cannot write log: $LOG" >&2
+    exit 1
 fi
 
 timestamp() {
@@ -91,32 +126,74 @@ log_message() {
     printf '[%s] %s\n' "$(timestamp)" "$1" | tee -a "$LOG"
 }
 
+is_usage_limit_event() {
+    local line
+    local event_pattern='^[[:space:]]*\{[[:space:]]*"type"[[:space:]]*:[[:space:]]*"(error|turn[.]failed)"'
+    local message_pattern="\"message\"[[:space:]]*:[[:space:]]*\"You've hit your usage limit"
+
+    while IFS= read -r line; do
+        if [[ "$line" =~ $event_pattern ]] && [[ "$line" =~ $message_pattern ]]; then
+            return 0
+        fi
+    done <"$ATTEMPT_OUTPUT"
+
+    return 1
+}
+
+CODEX_OPTIONS=(--color never --json)
+if [ -n "$CODEX_PROFILE" ]; then
+    CODEX_OPTIONS+=(--profile "$CODEX_PROFILE")
+fi
+
 cd -- "$REPOSITORY" || exit 1
+
+if ! log_message "Logging to $LOG."; then
+    echo "$PROGRAM_NAME: cannot write log: $LOG" >&2
+    exit 1
+fi
 
 while true; do
     ATTEMPT_OUTPUT="$(mktemp "$STATE_DIR/attempt.XXXXXX")" || exit 1
 
-    log_message "Starting Codex for session $SESSION_ID."
+    if ! log_message "Starting Codex for session $SESSION_ID."; then
+        echo "$PROGRAM_NAME: cannot write log: $LOG" >&2
+        exit 1
+    fi
 
-    "$CODEX_BIN" exec \
-        --color never \
-        resume "$SESSION_ID" "$PROMPT" \
+    "$CODEX_BIN" exec "${CODEX_OPTIONS[@]}" \
+        resume -- "$SESSION_ID" "$PROMPT" \
         2>&1 | tee -a "$LOG" "$ATTEMPT_OUTPUT"
-    CODEX_STATUS="${PIPESTATUS[0]}"
+    PIPELINE_STATUS=("${PIPESTATUS[@]}")
+    CODEX_STATUS="${PIPELINE_STATUS[0]}"
+    TEE_STATUS="${PIPELINE_STATUS[1]}"
+
+    if [ "$TEE_STATUS" -ne 0 ]; then
+        echo "$PROGRAM_NAME: failed to record Codex output in $LOG" >&2
+        exit 1
+    fi
 
     if [ "$CODEX_STATUS" -eq 0 ]; then
-        log_message "Codex completed successfully."
+        if ! log_message "Codex completed successfully."; then
+            echo "$PROGRAM_NAME: cannot write log: $LOG" >&2
+            exit 1
+        fi
         exit 0
     fi
 
-    if grep -Fqi "You've hit your usage limit" "$ATTEMPT_OUTPUT"; then
-        log_message "Usage limit reached; retrying in $RETRY_SECONDS seconds."
+    if is_usage_limit_event; then
+        if ! log_message "Usage limit reached; retrying in $RETRY_SECONDS seconds."; then
+            echo "$PROGRAM_NAME: cannot write log: $LOG" >&2
+            exit 1
+        fi
         rm -f -- "$ATTEMPT_OUTPUT"
         ATTEMPT_OUTPUT=""
         sleep "$RETRY_SECONDS"
         continue
     fi
 
-    log_message "Codex failed without the expected usage-limit message; stopping with status $CODEX_STATUS."
+    if ! log_message "Codex failed without a usage-limit error event; stopping with status $CODEX_STATUS."; then
+        echo "$PROGRAM_NAME: cannot write log: $LOG" >&2
+        exit 1
+    fi
     exit "$CODEX_STATUS"
 done

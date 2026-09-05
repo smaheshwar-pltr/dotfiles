@@ -6,13 +6,35 @@ I've spent virtually zero time looking over this or thinking about portability. 
 
 ## Resume a Codex task overnight
 
-`codex-overnight` resumes an existing Codex session. If Codex exits with
-`You've hit your usage limit`, the script waits 15 minutes and resumes the same
-session. It exits after a successful turn or any other failure.
+`codex-overnight` resumes an existing Codex transcript. If a failed turn emits
+the `You've hit your usage limit` error, the script waits 15 minutes and
+resumes the same session. It exits after a successful turn or any other
+failure.
+
+Before leaving a task unattended:
+
+- Install and authenticate the Codex CLI. Install `flock` from the WSL
+  `util-linux` package. The target directory must be a Git repository.
+- Keep Windows plugged in and configure it not to sleep or hibernate. Sleep,
+  hibernation, lid-close actions, Windows restarts, and `wsl --shutdown` stop
+  or pause work inside WSL.
+- Make sure the active Codex configuration grants every permission the task
+  needs. Exec is headless and cannot stop for interactive approvals.
+
+Codex exec restores the transcript but resolves the model and permissions from
+the current configuration. It does not automatically restore changes made only
+inside the session with `/model` or `/permissions`. If the session uses a named
+profile, pass that profile to the wrapper:
+
+```sh
+CODEX_OVERNIGHT_PROFILE=overnight \
+  ./codex-overnight "$HOME/src/my-project" "CHAT_ID"
+```
 
 To start an overnight run:
 
-1. Start Codex in the target Git repository and give it the full task.
+1. Open the existing Codex session in the target Git repository. Give it the
+   full task if you have not already done so.
 2. Run `/status` and copy the chat ID.
 3. Exit the interactive session with `/quit`. Do not run the interactive and
    overnight clients against the same session at the same time.
@@ -21,12 +43,6 @@ To start an overnight run:
    ```sh
    ./codex-overnight "$HOME/src/my-project" "CHAT_ID"
    ```
-
-The wrapper passes neither a model nor a sandbox override. Codex uses its
-normal resolved configuration for the resumed exec turn. Keep the same Codex
-configuration or profile that you used for the session if its settings differ
-from your defaults. Because exec is headless, it cannot stop for interactive
-approvals. Configure the required permissions before leaving the task.
 
 The non-interactive client does not show the interactive "Approaching rate
 limits" picker. In an interactive session, choose `Keep current model` or
@@ -39,23 +55,24 @@ tmux new -s codex-overnight
 ./codex-overnight "$HOME/src/my-project" "CHAT_ID"
 ```
 
-Detach with `Ctrl-b d`. Reattach with `tmux attach -t codex-overnight`. The WSL
-instance and the Windows machine must remain running. tmux cannot survive a
-Windows restart or `wsl --shutdown`.
+This repository changes the tmux prefix to `Alt-a`, so detach with `Alt-a d`.
+You can also run `tmux detach-client`. Reattach with
+`tmux attach -t codex-overnight`. tmux protects against terminal disconnects,
+not Windows power-state changes.
 
 Logs are private to your user by default and live under
 `${XDG_STATE_HOME:-$HOME/.local/state}/codex-overnight`. They can contain Codex
-output from the target repository. To use a different retry delay or state
-directory, set `CODEX_OVERNIGHT_RETRY_SECONDS` or
-`CODEX_OVERNIGHT_STATE_DIR`:
+JSON events and output from the target repository. The wrapper prints the log
+path when it starts. To use a different retry delay or state directory, set
+`CODEX_OVERNIGHT_RETRY_SECONDS` or `CODEX_OVERNIGHT_STATE_DIR`:
 
 ```sh
 CODEX_OVERNIGHT_RETRY_SECONDS=60 ./codex-overnight "$PWD" "CHAT_ID"
 ```
 
 Press `Ctrl-C` to stop. Rerun the same command to recover after a non-limit
-failure. On WSL, `flock` prevents two wrappers from resuming the same session
-at once.
+failure or an interrupted WSL instance. `flock` prevents two wrappers from
+resuming the same session, even when they use different log directories.
 
 Run the hermetic test with:
 
