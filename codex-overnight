@@ -193,7 +193,7 @@ show_config_summary() {
     server_input="${CODEX_CONFIG_SERVER[1]}"
 
     printf '%s\n' \
-        '{"method":"initialize","id":1,"params":{"clientInfo":{"name":"codex_overnight","title":"Codex Overnight","version":"0.1.0"}}}' \
+        '{"method":"initialize","id":1,"params":{"clientInfo":{"name":"codex_overnight","title":"Codex Overnight","version":"0.1.0"},"capabilities":{"experimentalApi":true}}}' \
         >&"$server_input" || return 1
     read_app_server_response "$server_output" 1 >/dev/null || return 1
     printf '%s\n' \
@@ -211,7 +211,13 @@ show_config_summary() {
     workdir="$(json_string_field "$response" cwd)" || return 1
     model="$(json_string_field "$response" model)" || return 1
     provider="$(json_string_field "$response" modelProvider)" || return 1
-    approval="$(json_string_field "$response" approvalPolicy)" || return 1
+    if approval="$(json_string_field "$response" approvalPolicy)"; then
+        :
+    elif [[ "$response" == *'"approvalPolicy":{"granular":'* ]]; then
+        approval="granular"
+    else
+        return 1
+    fi
     reviewer="$(json_string_field "$response" approvalsReviewer)" || return 1
     reasoning_effort="$(json_string_field "$response" reasoningEffort)" || reasoning_effort="none"
     if [[ "$response" =~ $sandbox_pattern ]]; then
