@@ -1,0 +1,333 @@
+#!/usr/bin/env bash
+
+set -uo pipefail
+
+umask 077
+
+PROGRAM_NAME="${0##*/}"
+DEFAULT_PROMPT="Continue the existing task until it is complete or genuinely blocked. First reconcile the saved session with the repository's current state and preserve correct partial work. Run the relevant tests before finishing."
+
+usage() {
+    cat <<EOF
+Usage: $PROGRAM_NAME SESSION_ID [PROMPT]
+
+Resume a Codex session and retry it after usage-limit resets.
+
+Environment variables:
+  CODEX_BIN                         Codex executable (default: codex)
+  CODEX_OVERNIGHT_PROFILE           Codex profile used to resume the session
+  CODEX_OVERNIGHT_RETRY_SECONDS     Delay between retries (default: 900)
+  CODEX_OVERNIGHT_STATE_DIR         Log directory
+EOF
+}
+
+case "${1:-}" in
+    -h | --help)
+        usage
+        exit 0
+        ;;
+esac
+
+if [ "$#" -lt 1 ] || [ "$#" -gt 2 ]; then
+    usage >&2
+    exit 2
+fi
+
+REPOSITORY="$PWD"
+SESSION_ID="$1"
+PROMPT="${2:-$DEFAULT_PROMPT}"
+CODEX_BIN="${CODEX_BIN:-codex}"
+CODEX_PROFILE="${CODEX_OVERNIGHT_PROFILE:-}"
+RETRY_SECONDS="${CODEX_OVERNIGHT_RETRY_SECONDS:-900}"
+STATE_DIR="${CODEX_OVERNIGHT_STATE_DIR:-${XDG_STATE_HOME:-$HOME/.local/state}/codex-overnight}"
+LOCK_DIR="${XDG_RUNTIME_DIR:-${XDG_STATE_HOME:-$HOME/.local/state}}/codex-overnight-locks"
+
+if [ -z "$SESSION_ID" ]; then
+    echo "$PROGRAM_NAME: SESSION_ID must not be empty" >&2
+    exit 2
+fi
+
+if ! [[ "$RETRY_SECONDS" =~ ^[0-9]+$ ]]; then
+    echo "$PROGRAM_NAME: CODEX_OVERNIGHT_RETRY_SECONDS must be a non-negative integer" >&2
+    exit 2
+fi
+
+if [ ! -d "$REPOSITORY" ]; then
+    echo "$PROGRAM_NAME: repository does not exist: $REPOSITORY" >&2
+    exit 2
+fi
+
+if ! git -C "$REPOSITORY" rev-parse --is-inside-work-tree >/dev/null 2>&1; then
+    echo "$PROGRAM_NAME: not a Git repository: $REPOSITORY" >&2
+    exit 2
+fi
+
+if ! command -v "$CODEX_BIN" >/dev/null 2>&1; then
+    echo "$PROGRAM_NAME: Codex executable not found: $CODEX_BIN" >&2
+    exit 127
+fi
+
+case "$STATE_DIR" in
+    /*) ;;
+    *)
+        echo "$PROGRAM_NAME: CODEX_OVERNIGHT_STATE_DIR must be an absolute path" >&2
+        exit 2
+        ;;
+esac
+
+if ! mkdir -p -- "$STATE_DIR"; then
+    echo "$PROGRAM_NAME: cannot create state directory: $STATE_DIR" >&2
+    exit 1
+fi
+if ! STATE_DIR="$(cd -- "$STATE_DIR" && pwd -P)"; then
+    echo "$PROGRAM_NAME: cannot resolve state directory: $STATE_DIR" >&2
+    exit 1
+fi
+
+SESSION_KEY="$(printf '%s' "$SESSION_ID" | cksum | awk '{print $1}')"
+LOG="$STATE_DIR/session-$SESSION_KEY.log"
+ATTEMPT_OUTPUT=""
+CONFIG_SERVER_PID=""
+CONFIG_SUMMARY=""
+
+cleanup() {
+    if [ -n "$CONFIG_SERVER_PID" ]; then
+        kill "$CONFIG_SERVER_PID" 2>/dev/null || true
+        wait "$CONFIG_SERVER_PID" 2>/dev/null || true
+    fi
+    if [ -n "$ATTEMPT_OUTPUT" ]; then
+        rm -f -- "$ATTEMPT_OUTPUT"
+    fi
+}
+
+trap cleanup EXIT
+trap 'exit 130' HUP INT TERM
+
+if command -v flock >/dev/null 2>&1; then
+    if mkdir -p -- "$LOCK_DIR" 2>/dev/null &&
+        LOCK_DIR="$(cd -- "$LOCK_DIR" && pwd -P)"; then
+        LOCK="$LOCK_DIR/session-$SESSION_KEY.lock"
+        if { exec 9>"$LOCK"; } 2>/dev/null; then
+            flock -n -E 75 9
+            LOCK_STATUS="$?"
+            case "$LOCK_STATUS" in
+                0) ;;
+                75)
+                    echo "$PROGRAM_NAME: another runner is already using this session" >&2
+                    exit 1
+                    ;;
+                *) echo "$PROGRAM_NAME: warning: session locking is unavailable" >&2 ;;
+            esac
+        else
+            echo "$PROGRAM_NAME: warning: session locking is unavailable" >&2
+        fi
+    else
+        echo "$PROGRAM_NAME: warning: session locking is unavailable" >&2
+    fi
+fi
+
+if ! : >>"$LOG"; then
+    echo "$PROGRAM_NAME: cannot write log: $LOG" >&2
+    exit 1
+fi
+
+timestamp() {
+    date '+%Y-%m-%dT%H:%M:%S%z'
+}
+
+log_message() {
+    printf '[%s] %s\n' "$(timestamp)" "$1" | tee -a "$LOG"
+}
+
+read_app_server_response() {
+    local output_fd="$1"
+    local response_id="$2"
+    local line
+
+    for _ in {1..10}; do
+        if IFS= read -r -t 1 line <&"$output_fd" &&
+            [[ "$line" == "{\"id\":$response_id,"* ]]; then
+            printf '%s\n' "$line"
+            return 0
+        fi
+    done
+
+    return 1
+}
+
+json_string_field() {
+    local json="$1"
+    local field="$2"
+    local pattern="\"$field\"[[:space:]]*:[[:space:]]*\"([^\"]+)\""
+
+    if [[ "$json" =~ $pattern ]]; then
+        printf '%s\n' "${BASH_REMATCH[1]}"
+        return 0
+    fi
+
+    return 1
+}
+
+show_config_summary() {
+    local command=("$CODEX_BIN")
+    local server_input
+    local server_output
+    local response
+    local workdir
+    local model
+    local provider
+    local approval
+    local reviewer
+    local sandbox
+    local reasoning_effort
+    local sandbox_pattern='"sandbox"[[:space:]]*:[[:space:]]*\{[[:space:]]*"type"[[:space:]]*:[[:space:]]*"([^"]+)"'
+
+    if [ -n "$CODEX_PROFILE" ]; then
+        command+=(--profile "$CODEX_PROFILE")
+    fi
+    command+=(app-server --stdio)
+
+    coproc CODEX_CONFIG_SERVER { "${command[@]}" 2>/dev/null; }
+    CONFIG_SERVER_PID="$CODEX_CONFIG_SERVER_PID"
+    server_output="${CODEX_CONFIG_SERVER[0]}"
+    server_input="${CODEX_CONFIG_SERVER[1]}"
+
+    printf '%s\n' \
+        '{"method":"initialize","id":1,"params":{"clientInfo":{"name":"codex_overnight","title":"Codex Overnight","version":"0.1.0"},"capabilities":{"experimentalApi":true}}}' \
+        >&"$server_input" || return 1
+    read_app_server_response "$server_output" 1 >/dev/null || return 1
+    printf '%s\n' \
+        '{"method":"initialized"}' \
+        '{"method":"thread/start","id":2,"params":{"ephemeral":true}}' \
+        >&"$server_input" || return 1
+    response="$(read_app_server_response "$server_output" 2)" || return 1
+
+    exec {server_input}>&-
+    exec {server_output}<&-
+    kill "$CONFIG_SERVER_PID" 2>/dev/null || true
+    wait "$CONFIG_SERVER_PID" 2>/dev/null || true
+    CONFIG_SERVER_PID=""
+
+    workdir="$(json_string_field "$response" cwd)" || return 1
+    model="$(json_string_field "$response" model)" || return 1
+    provider="$(json_string_field "$response" modelProvider)" || return 1
+    if approval="$(json_string_field "$response" approvalPolicy)"; then
+        :
+    elif [[ "$response" == *'"approvalPolicy":{"granular":'* ]]; then
+        approval="granular"
+    else
+        return 1
+    fi
+    reviewer="$(json_string_field "$response" approvalsReviewer)" || return 1
+    reasoning_effort="$(json_string_field "$response" reasoningEffort)" || reasoning_effort="none"
+    if [[ "$response" =~ $sandbox_pattern ]]; then
+        sandbox="${BASH_REMATCH[1]}"
+    else
+        return 1
+    fi
+
+    if [ "$reviewer" != "auto_review" ]; then
+        approval="never"
+    fi
+
+    case "$sandbox" in
+        readOnly) sandbox="read-only" ;;
+        workspaceWrite) sandbox="workspace-write" ;;
+        dangerFullAccess) sandbox="danger-full-access" ;;
+        externalSandbox) sandbox="external-sandbox" ;;
+    esac
+
+    printf -v CONFIG_SUMMARY '%s\n' \
+        'OpenAI Codex launch preview' \
+        '--------' \
+        "workdir: $workdir" \
+        "model: $model" \
+        "provider: $provider" \
+        "approval: $approval" \
+        "sandbox: $sandbox" \
+        "reasoning effort: $reasoning_effort" \
+        '--------'
+}
+
+is_usage_limit_event() {
+    local line
+    local event_pattern='^[[:space:]]*\{[[:space:]]*"type"[[:space:]]*:[[:space:]]*"(error|turn[.]failed)"'
+    local message_pattern="\"message\"[[:space:]]*:[[:space:]]*\"You've hit your usage limit"
+
+    while IFS= read -r line; do
+        if [[ "$line" =~ $event_pattern ]] && [[ "$line" =~ $message_pattern ]]; then
+            return 0
+        fi
+    done <"$ATTEMPT_OUTPUT"
+
+    return 1
+}
+
+CODEX_OPTIONS=(--color never --json)
+if [ -n "$CODEX_PROFILE" ]; then
+    CODEX_OPTIONS+=(--profile "$CODEX_PROFILE")
+fi
+
+cd -- "$REPOSITORY" || exit 1
+
+if ! log_message "Logging to $LOG."; then
+    echo "$PROGRAM_NAME: cannot write log: $LOG" >&2
+    exit 1
+fi
+
+while true; do
+    ATTEMPT_OUTPUT="$(mktemp "$STATE_DIR/attempt.XXXXXX")" || exit 1
+
+    if ! log_message "Starting Codex for session $SESSION_ID."; then
+        echo "$PROGRAM_NAME: cannot write log: $LOG" >&2
+        exit 1
+    fi
+
+    if ! show_config_summary; then
+        echo "$PROGRAM_NAME: could not resolve the Codex launch configuration" >&2
+        exit 1
+    fi
+    printf '%s' "$CONFIG_SUMMARY" | tee -a "$LOG"
+    CONFIG_TEE_STATUS="${PIPESTATUS[1]}"
+    if [ "$CONFIG_TEE_STATUS" -ne 0 ]; then
+        echo "$PROGRAM_NAME: failed to record the Codex launch configuration in $LOG" >&2
+        exit 1
+    fi
+
+    "$CODEX_BIN" exec "${CODEX_OPTIONS[@]}" \
+        resume -- "$SESSION_ID" "$PROMPT" \
+        9>&- 2>&1 | tee -a "$LOG" "$ATTEMPT_OUTPUT" 9>&-
+    PIPELINE_STATUS=("${PIPESTATUS[@]}")
+    CODEX_STATUS="${PIPELINE_STATUS[0]}"
+    TEE_STATUS="${PIPELINE_STATUS[1]}"
+
+    if [ "$TEE_STATUS" -ne 0 ]; then
+        echo "$PROGRAM_NAME: failed to record Codex output in $LOG" >&2
+        exit 1
+    fi
+
+    if [ "$CODEX_STATUS" -eq 0 ]; then
+        if ! log_message "Codex completed successfully."; then
+            echo "$PROGRAM_NAME: cannot write log: $LOG" >&2
+            exit 1
+        fi
+        exit 0
+    fi
+
+    if is_usage_limit_event; then
+        if ! log_message "Usage limit reached; retrying in $RETRY_SECONDS seconds."; then
+            echo "$PROGRAM_NAME: cannot write log: $LOG" >&2
+            exit 1
+        fi
+        rm -f -- "$ATTEMPT_OUTPUT"
+        ATTEMPT_OUTPUT=""
+        sleep "$RETRY_SECONDS"
+        continue
+    fi
+
+    if ! log_message "Codex failed without a usage-limit error event; stopping with status $CODEX_STATUS."; then
+        echo "$PROGRAM_NAME: cannot write log: $LOG" >&2
+        exit 1
+    fi
+    exit "$CODEX_STATUS"
+done
