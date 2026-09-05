@@ -89,10 +89,10 @@ export FAKE_SCENARIO
 "$SCRIPT" "$TARGET_REPOSITORY" session-123 >"$TEST_ROOT/limit-output"
 
 [ "$(<"$FAKE_COUNT_FILE")" -eq 2 ] || fail "usage limit should retry once"
-assert_contains "$FAKE_ARGS_FILE" "workspace-write"
 assert_contains "$FAKE_ARGS_FILE" "resume"
 assert_contains "$FAKE_ARGS_FILE" "session-123"
 assert_not_contains "$FAKE_ARGS_FILE" "--model"
+assert_not_contains "$FAKE_ARGS_FILE" "--sandbox"
 assert_not_contains "$FAKE_ARGS_FILE" "--ask-for-approval"
 assert_contains "$TEST_ROOT/limit-output" "Usage limit reached; retrying in 0 seconds."
 assert_contains "$TEST_ROOT/limit-output" "Codex completed successfully."

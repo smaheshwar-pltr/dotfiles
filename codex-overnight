@@ -100,7 +100,6 @@ while true; do
 
     "$CODEX_BIN" exec \
         --color never \
-        --sandbox workspace-write \
         resume "$SESSION_ID" "$PROMPT" \
         2>&1 | tee -a "$LOG" "$ATTEMPT_OUTPUT"
     CODEX_STATUS="${PIPESTATUS[0]}"

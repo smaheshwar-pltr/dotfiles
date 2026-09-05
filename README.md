@@ -22,12 +22,15 @@ To start an overnight run:
    ./codex-overnight "$HOME/src/my-project" "CHAT_ID"
    ```
 
-The wrapper uses `codex exec --sandbox workspace-write`. It does not pass a
-model override, so Codex uses its normal model resolution when it resumes the
-session. The non-interactive client does not show the interactive
-"Approaching rate limits" picker. In an interactive session, choose
-`Keep current model` or `Keep current model (never show again)` if you do not
-want to switch.
+The wrapper passes neither a model nor a sandbox override. Codex uses its
+normal resolved configuration for the resumed exec turn. Keep the same Codex
+configuration or profile that you used for the session if its settings differ
+from your defaults. Because exec is headless, it cannot stop for interactive
+approvals. Configure the required permissions before leaving the task.
+
+The non-interactive client does not show the interactive "Approaching rate
+limits" picker. In an interactive session, choose `Keep current model` or
+`Keep current model (never show again)` if you do not want to switch.
 
 Run the command inside tmux so it survives a terminal disconnect:
 
