@@ -14,9 +14,7 @@ failure.
 From this dotfiles checkout, put the script on your `PATH` once:
 
 ```sh
-mkdir -p "$HOME/.local/bin"
-ln -s "$PWD/codex-overnight" "$HOME/.local/bin/codex-overnight"
-export PATH="$HOME/.local/bin:$PATH"
+sudo ln -s "$PWD/codex-overnight" /usr/local/bin/codex-overnight
 command -v codex-overnight
 ```
 
