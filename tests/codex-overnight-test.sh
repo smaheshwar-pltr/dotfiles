@@ -62,6 +62,23 @@ make_fake_codex() {
 #!/usr/bin/env bash
 set -euo pipefail
 
+if [[ " $* " == *" app-server "* ]]; then
+    if [ "${FAKE_CONFIG_PREVIEW_FAIL:-0}" -eq 1 ]; then
+        exit 1
+    fi
+    while IFS= read -r request; do
+        case "$request" in
+            *'"id":1'*)
+                echo '{"id":1,"result":{"userAgent":"fake","codexHome":"/tmp","platformFamily":"unix","platformOs":"linux"}}'
+                ;;
+            *'"id":2'*)
+                printf '%s\n' "{\"id\":2,\"result\":{\"model\":\"test-model\",\"modelProvider\":\"test-provider\",\"cwd\":\"$PWD\",\"approvalPolicy\":\"on-request\",\"approvalsReviewer\":\"auto_review\",\"sandbox\":{\"type\":\"workspaceWrite\",\"networkAccess\":false},\"reasoningEffort\":\"high\"}}"
+                ;;
+        esac
+    done
+    exit 0
+fi
+
 count=0
 if [ -f "$FAKE_COUNT_FILE" ]; then
     count="$(<"$FAKE_COUNT_FILE")"
@@ -146,6 +163,24 @@ assert_args_repeated 2 \
     resume -- session-123 "$DEFAULT_PROMPT"
 assert_contains "$TEST_ROOT/limit-output" "Usage limit reached; retrying in 0 seconds."
 assert_contains "$TEST_ROOT/limit-output" "Codex completed successfully."
+assert_contains "$TEST_ROOT/limit-output" "workdir: $TARGET_REPOSITORY"
+assert_contains "$TEST_ROOT/limit-output" "model: test-model"
+assert_contains "$TEST_ROOT/limit-output" "provider: test-provider"
+assert_contains "$TEST_ROOT/limit-output" "approval: on-request"
+assert_contains "$TEST_ROOT/limit-output" "sandbox: workspace-write"
+assert_contains "$TEST_ROOT/limit-output" "reasoning effort: high"
+
+reset_fake
+FAKE_CONFIG_PREVIEW_FAIL=1
+export FAKE_CONFIG_PREVIEW_FAIL
+set +e
+run_in_target preview-failure >"$TEST_ROOT/preview-failure-output" 2>&1
+status=$?
+set -e
+unset FAKE_CONFIG_PREVIEW_FAIL
+[ "$status" -eq 1 ] || fail "config preview failure should exit with status 1"
+assert_contains "$TEST_ROOT/preview-failure-output" "could not resolve the Codex launch configuration"
+[ ! -e "$FAKE_COUNT_FILE" ] || fail "Codex should not start when config preview fails"
 
 reset_fake
 unset CODEX_OVERNIGHT_PROFILE

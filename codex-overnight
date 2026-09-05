@@ -87,8 +87,14 @@ fi
 SESSION_KEY="$(printf '%s' "$SESSION_ID" | cksum | awk '{print $1}')"
 LOG="$STATE_DIR/session-$SESSION_KEY.log"
 ATTEMPT_OUTPUT=""
+CONFIG_SERVER_PID=""
+CONFIG_SUMMARY=""
 
 cleanup() {
+    if [ -n "$CONFIG_SERVER_PID" ]; then
+        kill "$CONFIG_SERVER_PID" 2>/dev/null || true
+        wait "$CONFIG_SERVER_PID" 2>/dev/null || true
+    fi
     if [ -n "$ATTEMPT_OUTPUT" ]; then
         rm -f -- "$ATTEMPT_OUTPUT"
     fi
@@ -133,6 +139,110 @@ log_message() {
     printf '[%s] %s\n' "$(timestamp)" "$1" | tee -a "$LOG"
 }
 
+read_app_server_response() {
+    local output_fd="$1"
+    local response_id="$2"
+    local line
+
+    for _ in {1..10}; do
+        if IFS= read -r -t 1 line <&"$output_fd" &&
+            [[ "$line" == "{\"id\":$response_id,"* ]]; then
+            printf '%s\n' "$line"
+            return 0
+        fi
+    done
+
+    return 1
+}
+
+json_string_field() {
+    local json="$1"
+    local field="$2"
+    local pattern="\"$field\"[[:space:]]*:[[:space:]]*\"([^\"]+)\""
+
+    if [[ "$json" =~ $pattern ]]; then
+        printf '%s\n' "${BASH_REMATCH[1]}"
+        return 0
+    fi
+
+    return 1
+}
+
+show_config_summary() {
+    local command=("$CODEX_BIN")
+    local server_input
+    local server_output
+    local response
+    local workdir
+    local model
+    local provider
+    local approval
+    local reviewer
+    local sandbox
+    local reasoning_effort
+    local sandbox_pattern='"sandbox"[[:space:]]*:[[:space:]]*\{[[:space:]]*"type"[[:space:]]*:[[:space:]]*"([^"]+)"'
+
+    if [ -n "$CODEX_PROFILE" ]; then
+        command+=(--profile "$CODEX_PROFILE")
+    fi
+    command+=(app-server --stdio)
+
+    coproc CODEX_CONFIG_SERVER { "${command[@]}" 2>/dev/null; }
+    CONFIG_SERVER_PID="$CODEX_CONFIG_SERVER_PID"
+    server_output="${CODEX_CONFIG_SERVER[0]}"
+    server_input="${CODEX_CONFIG_SERVER[1]}"
+
+    printf '%s\n' \
+        '{"method":"initialize","id":1,"params":{"clientInfo":{"name":"codex_overnight","title":"Codex Overnight","version":"0.1.0"}}}' \
+        >&"$server_input" || return 1
+    read_app_server_response "$server_output" 1 >/dev/null || return 1
+    printf '%s\n' \
+        '{"method":"initialized"}' \
+        '{"method":"thread/start","id":2,"params":{"ephemeral":true}}' \
+        >&"$server_input" || return 1
+    response="$(read_app_server_response "$server_output" 2)" || return 1
+
+    exec {server_input}>&-
+    exec {server_output}<&-
+    kill "$CONFIG_SERVER_PID" 2>/dev/null || true
+    wait "$CONFIG_SERVER_PID" 2>/dev/null || true
+    CONFIG_SERVER_PID=""
+
+    workdir="$(json_string_field "$response" cwd)" || return 1
+    model="$(json_string_field "$response" model)" || return 1
+    provider="$(json_string_field "$response" modelProvider)" || return 1
+    approval="$(json_string_field "$response" approvalPolicy)" || return 1
+    reviewer="$(json_string_field "$response" approvalsReviewer)" || return 1
+    reasoning_effort="$(json_string_field "$response" reasoningEffort)" || reasoning_effort="none"
+    if [[ "$response" =~ $sandbox_pattern ]]; then
+        sandbox="${BASH_REMATCH[1]}"
+    else
+        return 1
+    fi
+
+    if [ "$reviewer" != "auto_review" ]; then
+        approval="never"
+    fi
+
+    case "$sandbox" in
+        readOnly) sandbox="read-only" ;;
+        workspaceWrite) sandbox="workspace-write" ;;
+        dangerFullAccess) sandbox="danger-full-access" ;;
+        externalSandbox) sandbox="external-sandbox" ;;
+    esac
+
+    printf -v CONFIG_SUMMARY '%s\n' \
+        'OpenAI Codex launch preview' \
+        '--------' \
+        "workdir: $workdir" \
+        "model: $model" \
+        "provider: $provider" \
+        "approval: $approval" \
+        "sandbox: $sandbox" \
+        "reasoning effort: $reasoning_effort" \
+        '--------'
+}
+
 is_usage_limit_event() {
     local line
     local event_pattern='^[[:space:]]*\{[[:space:]]*"type"[[:space:]]*:[[:space:]]*"(error|turn[.]failed)"'
@@ -164,6 +274,17 @@ while true; do
 
     if ! log_message "Starting Codex for session $SESSION_ID."; then
         echo "$PROGRAM_NAME: cannot write log: $LOG" >&2
+        exit 1
+    fi
+
+    if ! show_config_summary; then
+        echo "$PROGRAM_NAME: could not resolve the Codex launch configuration" >&2
+        exit 1
+    fi
+    printf '%s' "$CONFIG_SUMMARY" | tee -a "$LOG"
+    CONFIG_TEE_STATUS="${PIPESTATUS[1]}"
+    if [ "$CONFIG_TEE_STATUS" -ne 0 ]; then
+        echo "$PROGRAM_NAME: failed to record the Codex launch configuration in $LOG" >&2
         exit 1
     fi
 

@@ -33,6 +33,21 @@ Changes made only inside a session with `/model` or `/permissions` are not
 automatically restored by the current exec client. Save those settings in the
 default configuration or the named profile before leaving the task.
 
+Before each attempt, the wrapper prints the resolved launch configuration:
+
+```text
+workdir: /home/user/src/my-project
+model: gpt-5.6-sol
+provider: openai_responses
+approval: never
+sandbox: workspace-write
+reasoning effort: high
+```
+
+The preview uses an ephemeral Codex app-server thread without starting a model
+turn. The wrapper stops if it cannot resolve these values. The actual Codex run
+remains in JSON mode so the wrapper can identify usage-limit errors reliably.
+
 To start an overnight run:
 
 1. In the existing session, run `/status`. Copy the chat ID and verify the
